@@ -1,199 +1,138 @@
+require("../../passport.js");
+
 const express = require("express");
-const contactsServices = require("../../controller/contactsController");
+const { STATUS_CODES } = require("../../utils/constants.js");
+const AuthController = require("../../controllers/authController.js");
+const { respondWithError } = require("../../utils/respondWithError.js");
+
+const {
+  listContacts,
+  getContactById,
+  addContact,
+  removeContact,
+  updateContact,
+  updateStatusContact,
+} = require("../../controllers/contactsController.js");
+
 const router = express.Router();
 
-const Joi = require("joi");
-const schema = Joi.object({
-  name: Joi.string().min(3).max(30).required(),
-  email: Joi.string()
-    .email({ minDomainSegments: 2, tlds: { allow: ["com", "net", "ro"] } })
-    .required(),
-  phone: Joi.string().alphanum().min(10).max(20).required(),
-  favorite: Joi.boolean(),
-});
+router.get("/", AuthController.validateAuth, async (req, res, next) => {
+  const { page = 1, limit = 5, favorite } = req.query;
 
-const favoriteSchema = Joi.object({ favorite: Joi.boolean() });
-
-const STATUS_CODES = {
-  success: 200,
-  created: 201,
-  deleted: 204,
-  badRequest: 400,
-  notFound: 404,
-  error: 500,
-};
-
-/* GET localhost:3000/api/contacts */
-router.get("/", async (req, res, next) => {
   try {
-    const contactsList = await contactsServices.listContacts();
+    const favoriteFilter =
+      favorite !== undefined ? favorite === "true" : undefined;
+
+    const contactsData = await listContacts(
+      Number(page),
+      Number(limit),
+      favoriteFilter
+    );
     res.status(STATUS_CODES.success).json({
-      data: contactsList,
+      message: "The list was successfully returned",
+      data: contactsData.contacts,
+      totalContacts: contactsData.totalContacts,
+      totalPages: contactsData.totalPages,
+      currentPage: contactsData.currentPage,
     });
   } catch (error) {
     respondWithError(res, error);
   }
 });
 
-/* GET localhost:3000/api/contacts/:contactId */
-router.get("/:contactId", async (req, res, next) => {
-  if (req.params.contactId.length !== 24) {
-    res.status(STATUS_CODES.badRequest).json({
-      message: "ID must have 24 alphanumeric characters",
-    });
-  } else {
+router.get(
+  "/:contactId",
+  AuthController.validateAuth,
+  async (req, res, next) => {
     try {
-      const contact = await contactsServices.getContactById(
-        req.params.contactId
-      );
-      if (contact) {
-        res.status(STATUS_CODES.success).json({
-          data: contact,
-        });
-      } else {
-        res.status(STATUS_CODES.notFound).json({
-          message: "The contact was not found.",
-        });
+      const contact = await getContactById(req.params.contactId);
+      console.log(req.params.contactId);
+      if (!contact) {
+        throw new Error("The contact was not found");
       }
-    } catch (error) {
-      respondWithError(res, error);
-    }
-  }
-});
-
-/* POST localhost:3000/api/contacts */
-router.post("/", async (req, res, next) => {
-  try {
-    const { error, value } = schema.validate(req.body, { abortEarly: false });
-    if (error) {
-      let errors = error.details;
-
-      let message = "";
-      for (i = 1; i <= errors.length; i++) {
-        message += errors[i - 1].message;
-        if (i < errors.length) message += ", ";
-      }
-      res.status(STATUS_CODES.badRequest).json({
-        message: message,
-      });
-    } else {
-      await contactsServices.addContact(req.body);
-      res.status(STATUS_CODES.created).json({
-        message: `The contact has been successfully added.`,
-        data: req.body,
-      });
-    }
-  } catch (error) {
-    respondWithError(res, error);
-  }
-});
-
-/* DELETE localhost:3000/api/contacts/:contactId */
-router.delete("/:contactId", async (req, res, next) => {
-  try {
-    const result = await contactsServices.removeContact(req.params.contactId);
-    if (!result) {
-      res.status(STATUS_CODES.notFound).json({
-        message: "The contact was not found.",
-      });
-    } else {
       res.status(STATUS_CODES.success).json({
-        message: "The contact has been successfully deleted.",
+        message: "The contact has been returned successfully",
+        data: contact,
       });
-    }
-  } catch (error) {
-    respondWithError(res, error);
-  }
-});
-
-/* PUT localhost:3000/api/contacts/:contactId */
-router.put("/:contactId", async (req, res, next) => {
-  try {
-    const { error, value } = schema.validate(req.body, { abortEarly: false });
-    if (error) {
-      let errors = error.details;
-
-      let message = "";
-      for (i = 1; i <= errors.length; i++) {
-        message += errors[i - 1].message;
-        if (i < errors.length) message += ", ";
-      }
-      res.status(STATUS_CODES.badRequest).json({
-        message: message,
-      });
-    } else {
-      const result = await contactsServices.updateContact(
-        req.params.contactId,
-        req.body
-      );
-      if (!result) {
-        res.status(STATUS_CODES.notFound).json({
-          message: "The contact was not found.",
-        });
-      } else {
-        res.status(STATUS_CODES.success).json({
-          message: `The contact has been successfully updated.`,
-          data: result,
-        });
-      }
-    }
-  } catch (error) {
-    respondWithError(res, error);
-  }
-});
-
-/* PATCH /api/contacts/:contactId/favorite */
-router.patch("/:contactId/favorite", async (req, res, next) => {
-  if (JSON.stringify(req.body) === "{}") {
-    res.status(STATUS_CODES.badRequest).json({
-      data: "Missing field favorite",
-    });
-  } else {
-    try {
-      const { error, value } = favoriteSchema.validate(req.body, {
-        abortEarly: false,
-      });
-      if (error) {
-        res.status(STATUS_CODES.badRequest).json({
-          message: error.message,
-        });
-      } else {
-        const result = await contactsServices.updateStatusContact(
-          req.params.contactId,
-          req.body
-        );
-        if (!result) {
-          res.status(STATUS_CODES.notFound).json({
-            message: "The contact was not found.",
-          });
-        } else {
-          res.status(STATUS_CODES.success).json({
-            message: `The contact has been successfully patched.`,
-          });
-        }
-      }
     } catch (error) {
       respondWithError(res, error);
     }
   }
+);
+
+router.post("/", AuthController.validateAuth, async (req, res, next) => {
+  const { name, email, phone } = req.body;
+  try {
+    const newContact = await addContact({ name, email, phone });
+    res.status(STATUS_CODES.created).json(newContact);
+  } catch (error) {
+    respondWithError(res, error);
+  }
 });
 
-/**
- * Validates Contact Fields
- */
-function checkIsValidContact(contact) {
-  if (!contact?.name || !contact?.email || !contact?.phone) {
-    return false;
+router.delete(
+  "/:contactId",
+  AuthController.validateAuth,
+  async (req, res, next) => {
+    try {
+      const contactId = req.params.contactId;
+      const removedContact = await removeContact(contactId);
+      if (!removedContact) {
+        res
+          .status(STATUS_CODES.notFound)
+          .json({ message: "The contact was not found" });
+        return;
+      }
+      res
+        .status(STATUS_CODES.deleted)
+        .json({ message: "Contact deleted successfully" });
+    } catch (error) {
+      respondWithError(res, error);
+    }
   }
-  return true;
-}
+);
 
-/**
- * Handles Error Cases
- */
-function respondWithError(res, error) {
-  console.error(error);
-  res.status(STATUS_CODES.error).json({ message: `${error}` });
-}
+router.put(
+  "/:contactId",
+  AuthController.validateAuth,
+  async (req, res, next) => {
+    const contactId = req.params.contactId;
+    try {
+      const updatedContact = await updateContact(req.body, contactId);
+      if (!updatedContact) {
+        res
+          .status(STATUS_CODES.notFound)
+          .json({ message: "The contact was not found" });
+        return;
+      }
+      res.status(STATUS_CODES.success).json(updatedContact);
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  }
+);
+
+router.patch(
+  "/:contactId/favorite",
+  AuthController.validateAuth,
+  async (req, res) => {
+    const contactId = req.params.contactId;
+    const { favorite } = req.body;
+    if (favorite === undefined) {
+      return res
+        .status(STATUS_CODES.badRequest)
+        .json({ message: "missing field favorite" });
+    }
+    try {
+      const updatedContact = await updateStatusContact(contactId, { favorite });
+      if (!updatedContact) {
+        return res.status(STATUS_CODES.notFound).json({ message: "Not found" });
+      }
+      res.status(STATUS_CODES.success).json(updatedContact);
+    } catch (error) {
+      respondWithError(res, error);
+    }
+  }
+);
 
 module.exports = router;
